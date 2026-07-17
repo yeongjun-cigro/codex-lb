@@ -348,6 +348,11 @@ class _HTTPBridgeUpstreamEventsMixin:
             )
         finally:
             if session.admission_waiter_count > 0 and not force_retire:
+                if close_classification == "clean" and failed_pending_count > 0:
+                    await self._record_http_bridge_retry_circuit_failure(
+                        session,
+                        detail="clean_close",
+                    )
                 _log_http_bridge_event(
                     "retire_deferred_for_admission_waiter",
                     session.key,
@@ -360,7 +365,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                 )
             else:
                 effective_retire_detail = retire_detail or error_code
-                if close_classification == "clean":
+                if close_classification == "clean" and failed_pending_count > 0:
                     await self._retire_stale_pending_http_bridge_session(
                         session,
                         detail=effective_retire_detail,
@@ -1224,6 +1229,8 @@ class _HTTPBridgeUpstreamEventsMixin:
             event_type == "response.completed"
             and terminal_request_state is not None
             and not terminal_request_state.suppressed_duplicate_tool_call
+            and terminal_request_state.request_kind != "prewarm"
+            and not terminal_request_state.skip_request_log
         ):
             await self._clear_http_bridge_retry_circuit(session)
 
