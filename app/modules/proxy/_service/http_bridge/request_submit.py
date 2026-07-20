@@ -123,6 +123,7 @@ from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
 from app.modules.proxy._service.support import (
+    _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _clear_websocket_request_error_overrides,
@@ -1536,12 +1537,20 @@ class _HTTPBridgeRequestSubmitMixin:
                 request_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 if request_text is None:
                     return False
+                model_fallback_replay = (
+                    request_state.precreated_replay_reason == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
+                )
                 if account_neutral_recovery:
                     request_state.preferred_account_id = session.account.id
-                elif not request_state.file_required_preferred_account and not hard_owner_bound:
-                    # A hard owner keeps its account through the reconnect
-                    # dispatch below (require_same_account=True), so only soft
-                    # sessions release and exclude the current account here.
+                elif not request_state.file_required_preferred_account and (
+                    not hard_owner_bound or model_fallback_replay
+                ):
+                    # A hard owner normally keeps its account through the
+                    # reconnect dispatch below (require_same_account=True), so
+                    # only soft sessions release and exclude it here.  A model
+                    # fallback replay is the exception: this account already
+                    # rejected the model, so it must be excluded even under
+                    # hard affinity.
                     request_state.preferred_account_id = None
                     request_state.excluded_account_ids.add(session.account.id)
             if session.account.id in request_state.excluded_account_ids:
@@ -1579,7 +1588,10 @@ class _HTTPBridgeRequestSubmitMixin:
         )
         reconnect_reader_kwargs = {"restart_reader": True} if restart_reader else {}
         try:
-            if hard_owner_bound:
+            if hard_owner_bound and session.account.id not in request_state.excluded_account_ids:
+                # A hard owner stays on its account unless the replay decision
+                # above excluded it (for example a model-fallback replay after
+                # this account rejected the requested model).
                 await self._reconnect_http_bridge_session(
                     session,
                     request_state=request_state,
