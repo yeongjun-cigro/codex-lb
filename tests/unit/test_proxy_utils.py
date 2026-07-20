@@ -3746,9 +3746,9 @@ async def test_compact_previous_response_owner_ignores_legacy_session_header_aff
     assert select_account.await_args is not None
     assert select_account.await_args.kwargs["required_account_id"] == owner.id
     assert select_account.await_args.kwargs["sticky_key"] is None
-    assert select_account.await_args.kwargs["sticky_kind"] == proxy_service.StickySessionKind.CODEX_SESSION
-    assert select_account.await_args.kwargs["sticky_source"] == "session_header"
-    assert select_account.await_args.kwargs["legacy_sticky_key"] == "sid-root"
+    assert select_account.await_args.kwargs["sticky_kind"] is None
+    assert select_account.await_args.kwargs["sticky_source"] is None
+    assert select_account.await_args.kwargs["legacy_sticky_key"] is None
 
 
 @pytest.mark.asyncio
@@ -31580,7 +31580,7 @@ async def test_select_account_with_budget_intersects_cap_spillover_with_request_
     ],
 )
 @pytest.mark.asyncio
-async def test_select_account_with_budget_reconciles_sticky_mapping_for_preferred_owner(
+async def test_select_account_with_budget_ignores_sticky_mapping_for_preferred_owner(
     monkeypatch: pytest.MonkeyPatch,
     sticky_source: proxy_service._CodexSessionSource,
     sticky_key: str,
@@ -31617,16 +31617,10 @@ async def test_select_account_with_budget_reconciles_sticky_mapping_for_preferre
     assert select_account.await_args is not None
     assert select_account.await_args.kwargs["account_ids"] is None
     assert select_account.await_args.kwargs["required_account_id"] == owner.id
-    if sticky_source == "session_header":
-        assert select_account.await_args.kwargs["sticky_key"] is None
-        assert select_account.await_args.kwargs["sticky_kind"] == proxy_service.StickySessionKind.CODEX_SESSION
-        assert select_account.await_args.kwargs["sticky_source"] == "session_header"
-        assert select_account.await_args.kwargs["legacy_sticky_key"] == sticky_key
-    else:
-        assert select_account.await_args.kwargs["sticky_key"] == sticky_key
-        assert select_account.await_args.kwargs["sticky_kind"] == proxy_service.StickySessionKind.CODEX_SESSION
-        assert select_account.await_args.kwargs["sticky_source"] == "turn_state"
-        assert select_account.await_args.kwargs["legacy_sticky_key"] is None
+    assert select_account.await_args.kwargs["sticky_key"] is None
+    assert select_account.await_args.kwargs["sticky_kind"] is None
+    assert select_account.await_args.kwargs["sticky_source"] is None
+    assert select_account.await_args.kwargs["legacy_sticky_key"] is None
 
 
 @pytest.mark.asyncio
