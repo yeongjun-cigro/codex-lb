@@ -1485,12 +1485,10 @@ class _HTTPBridgeRequestSubmitMixin:
             )
             close_generation = session.last_upstream_close_generation
             clean_close_hard_continuation = (
-                close_classification == "clean"
-                and hard_owner_bound
-                and request_state.previous_response_id is not None
+                close_classification == "clean" and hard_owner_bound and request_state.previous_response_id is not None
             )
             clean_close_hard_continuity_anchor = (
-                close_classification == "clean" and hard_session_affinity and request_state.hard_continuity_anchor
+                close_classification == "clean" and hard_owner_bound and request_state.hard_continuity_anchor
             )
             clean_close_retry_for_current_close = (
                 close_classification == "clean"
@@ -1537,9 +1535,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 request_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 if request_text is None:
                     return False
-                model_fallback_replay = (
-                    request_state.precreated_replay_reason == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
-                )
+                model_fallback_replay = request_state.precreated_replay_reason == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
                 if account_neutral_recovery:
                     request_state.preferred_account_id = session.account.id
                 elif not request_state.file_required_preferred_account and (
