@@ -36111,7 +36111,7 @@ async def test_retry_http_bridge_precreated_request_recovers_from_clean_close(mo
     retried = await service._retry_http_bridge_precreated_request(session)
 
     assert retried is True
-    reconnect.assert_awaited_once_with(session, request_state=request_state)
+    reconnect.assert_awaited_once_with(session, request_state=request_state, require_same_account=False)
     cast(AsyncMock, session.upstream.send_text).assert_awaited_once_with(request_state.request_text)
     assert request_state.replay_count == 1
 
@@ -36257,6 +36257,7 @@ async def test_retry_http_bridge_precreated_request_propagates_reader_restart(mo
     reconnect.assert_awaited_once_with(
         session,
         request_state=request_state,
+        require_same_account=False,
         restart_reader=True,
     )
     cast(AsyncMock, session.upstream.send_text).assert_awaited_once_with(request_state.request_text)
@@ -36457,11 +36458,14 @@ async def test_retry_http_bridge_precreated_request_suppresses_retry_after_respo
         "expected_preferred_account_id",
         "expected_excluded_account_ids",
         "expected_turn_state",
+        "expected_require_same_account",
     ),
     [
-        (False, "prompt_cache", None, {"acc_bridge_stalled"}, None),
-        (True, "prompt_cache", "acc_bridge_stalled", set(), "turn_state_old_account"),
-        (False, "session_header", "acc_bridge_stalled", set(), "turn_state_old_account"),
+        (False, "prompt_cache", None, {"acc_bridge_stalled"}, None, False),
+        (True, "prompt_cache", "acc_bridge_stalled", set(), "turn_state_old_account", False),
+        # A session_header key is hard: v1.22.0 pins the reconnect to the same
+        # account instead of only preserving the preferred-account hint.
+        (False, "session_header", "acc_bridge_stalled", set(), "turn_state_old_account", True),
     ],
 )
 async def test_retry_http_bridge_precreated_request_migrates_only_safe_initial_turns(
@@ -36471,6 +36475,7 @@ async def test_retry_http_bridge_precreated_request_migrates_only_safe_initial_t
     expected_preferred_account_id,
     expected_excluded_account_ids,
     expected_turn_state,
+    expected_require_same_account,
 ):
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     account = _make_account("acc_bridge_stalled")
@@ -36512,7 +36517,7 @@ async def test_retry_http_bridge_precreated_request_migrates_only_safe_initial_t
     reconnect.assert_awaited_once_with(
         session,
         request_state=request_state,
-        require_same_account=False,
+        require_same_account=expected_require_same_account,
     )
     assert request_state.preferred_account_id == expected_preferred_account_id
     assert request_state.excluded_account_ids == expected_excluded_account_ids
