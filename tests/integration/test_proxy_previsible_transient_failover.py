@@ -17,6 +17,7 @@ import pytest
 
 import app.modules.proxy.service as proxy_module
 from app.core.auth import generate_unique_account_id
+from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
 
 pytestmark = pytest.mark.integration
@@ -271,4 +272,45 @@ async def test_pinned_continuation_retries_same_account(async_client, monkeypatc
     assert [e["response"]["id"] for e in events if e.get("type") == "response.created"] == ["resp_pin_ok"]
     assert types.count("response.completed") == 1
     assert len(anchor_calls) == 1
+    assert followup_calls == [anchor_calls[0], anchor_calls[0]]
+
+
+@pytest.mark.asyncio
+async def test_pinned_continuation_retries_same_account_on_http_429(async_client, monkeypatch):
+    """An upstream HTTP 429 before dispatch on the pinned owner retries the same account."""
+    monkeypatch.setattr(get_settings(), "stream_previsible_transient_failover_enabled", True)
+    await _import_account(async_client, "acc_pin429_a", "pin429_a@example.com")
+    await _import_account(async_client, "acc_pin429_b", "pin429_b@example.com")
+    anchor_calls: list[str | None] = []
+    followup_calls: list[str | None] = []
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        if payload.previous_response_id is None:
+            anchor_calls.append(account_id)
+            yield _created("resp_pin429_anchor")
+            yield _completed("resp_pin429_anchor")
+            return
+        followup_calls.append(account_id)
+        if len(followup_calls) == 1:
+            raise ProxyResponseError(
+                429,
+                {"error": {"message": "Rate limit exceeded", "type": "server_error"}},
+                failure_phase="status",
+            )
+        yield _created("resp_pin429_ok")
+        yield _completed("resp_pin429_ok")
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    base = {"model": "gpt-5.1", "instructions": "hi", "input": [], "stream": True}
+    async with async_client.stream("POST", "/backend-api/codex/responses", json=base) as resp:
+        assert resp.status_code == 200
+        _ = [line async for line in resp.aiter_lines() if line]
+    followup = {**base, "previous_response_id": "resp_pin429_anchor"}
+    async with async_client.stream("POST", "/backend-api/codex/responses", json=followup) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+    events = _extract_events(lines)
+    types = [e.get("type") for e in events]
+    assert "response.failed" not in types
+    assert types.count("response.completed") == 1
     assert followup_calls == [anchor_calls[0], anchor_calls[0]]

@@ -438,6 +438,10 @@ class _StreamingRetryMixin:
         require_preferred_account = False
         last_retryable_stream_error: _RetryableStreamError | None = None
         previsible_pinned_retries = 0
+
+        def _previsible_transient_failover_enabled() -> bool:
+            return bool(getattr(base_settings, "stream_previsible_transient_failover_enabled", False))
+
         pending_post_refresh_transient_penalties: list[tuple[Account, UpstreamError, str, int | None, int]] = []
         deferred_account_error_backoffs: dict[str, Account] = {}
         post_refresh_transient_replacement_selected = False
@@ -2438,6 +2442,51 @@ class _StreamingRetryMixin:
                                     classified["failure_class"],
                                     action,
                                 )
+                                # Local patch: a pre-dispatch overload/429 on the account the
+                                # request is pinned to cannot fail over (selection would refuse
+                                # the excluded preferred owner), so retry the same account after
+                                # a short backoff instead of excluding it.
+                                if (
+                                    action == "failover_next"
+                                    and _previsible_transient_failover_enabled()
+                                    and (
+                                        code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES
+                                        or getattr(tex, "status_code", None) == 429
+                                    )
+                                    and (
+                                        require_preferred_account
+                                        or file_required_preferred_account
+                                        or payload_replay_required_account_id is not None
+                                    )
+                                    and account.id
+                                    in {
+                                        preferred_account_id,
+                                        payload_replay_required_account_id,
+                                        file_preferred_account_id,
+                                    }
+                                    and previsible_pinned_retries < _PREVISIBLE_PINNED_MAX_RETRIES
+                                    and _facade()._remaining_budget_seconds(deadline) > 0
+                                ):
+                                    previsible_pinned_retries += 1
+                                    delay = _PREVISIBLE_PINNED_BACKOFF_SECONDS[
+                                        min(previsible_pinned_retries, len(_PREVISIBLE_PINNED_BACKOFF_SECONDS)) - 1
+                                    ]
+                                    _facade().logger.info(
+                                        "Retrying pre-dispatch transient failure on pinned account "
+                                        "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s status=%s",
+                                        request_id,
+                                        account.id,
+                                        previsible_pinned_retries,
+                                        _PREVISIBLE_PINNED_MAX_RETRIES,
+                                        delay,
+                                        code,
+                                        getattr(tex, "status_code", None),
+                                    )
+                                    last_transient_exc = tex
+                                    await _release_tracked_stream_lease(current_account_lease)
+                                    current_account_lease = None
+                                    await asyncio.sleep(delay)
+                                    break
                                 if action == "failover_next":
                                     await _handle_or_defer_keyed_stream_health(
                                         account,
