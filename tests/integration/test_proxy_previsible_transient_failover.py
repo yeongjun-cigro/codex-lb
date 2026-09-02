@@ -70,6 +70,10 @@ def _in_progress(response_id: str) -> str:
     return _sse_event({"type": "response.in_progress", "response": {"id": response_id, "status": "in_progress"}})
 
 
+def _metadata(response_id: str) -> str:
+    return _sse_event({"type": "response.metadata", "response_id": response_id, "turn_state": "ts_" + response_id})
+
+
 def _text_delta() -> str:
     return _sse_event({"type": "response.output_text.delta", "delta": "hi"})
 
@@ -141,7 +145,12 @@ async def test_created_then_overloaded_fails_over_without_leaking_lifecycle(asyn
         async_client,
         monkeypatch,
         enabled=True,
-        first_account_frames=[_created("resp_bad"), _in_progress("resp_bad"), _overloaded("resp_bad", error_code)],
+        first_account_frames=[
+            _created("resp_bad"),
+            _in_progress("resp_bad"),
+            _metadata("resp_bad"),
+            _overloaded("resp_bad", error_code),
+        ],
     )
     types = [e.get("type") for e in events]
     assert "response.failed" not in types
@@ -204,10 +213,22 @@ async def test_success_path_relays_lifecycle_in_order(async_client, monkeypatch)
         async_client,
         monkeypatch,
         enabled=True,
-        first_account_frames=[_created("resp_a"), _in_progress("resp_a"), _text_delta(), _completed("resp_a")],
+        first_account_frames=[
+            _created("resp_a"),
+            _in_progress("resp_a"),
+            _metadata("resp_a"),
+            _text_delta(),
+            _completed("resp_a"),
+        ],
     )
     types = [e.get("type") for e in events]
-    assert types == ["response.created", "response.in_progress", "response.output_text.delta", "response.completed"]
+    assert types == [
+        "response.created",
+        "response.in_progress",
+        "response.metadata",
+        "response.output_text.delta",
+        "response.completed",
+    ]
     assert len(seen) == 1
 
 

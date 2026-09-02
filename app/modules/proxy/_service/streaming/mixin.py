@@ -429,7 +429,7 @@ from app.modules.proxy.work_admission import AdmissionLease
 
 # Lifecycle frames held back until the first non-lifecycle frame so a
 # created->failed(overload) sequence can still fail over transparently.
-_HELD_LIFECYCLE_EVENT_TYPES = frozenset({"response.created", "response.in_progress"})
+_HELD_LIFECYCLE_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.metadata"})
 
 
 def _previsible_transient_failover_enabled() -> bool:

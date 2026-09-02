@@ -620,6 +620,9 @@ def _request_log_client_fields(
 _PREVISIBLE_TRANSIENT_FAILOVER_CODES = frozenset({"server_is_overloaded", "overloaded_error"})
 # Bounded same-account retries when the request is pinned to the failed account.
 _PREVISIBLE_PINNED_MAX_RETRIES = 2
+# Per-retry delay for pinned same-account retries; an overloaded account rarely
+# recovers within the generic 200ms backoff, so wait a little longer.
+_PREVISIBLE_PINNED_BACKOFF_SECONDS = (1.0, 2.0)
 
 
 class _RetryableStreamError(Exception):

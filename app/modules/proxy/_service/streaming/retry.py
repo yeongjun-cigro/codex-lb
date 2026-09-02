@@ -45,6 +45,7 @@ from app.modules.proxy._service.support import (
     _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _ACCOUNT_SELECTION_RECOVERY_HEARTBEAT_SECONDS,
     _LOCAL_ACCOUNT_CAP_ERROR_CODES,
+    _PREVISIBLE_PINNED_BACKOFF_SECONDS,
     _PREVISIBLE_PINNED_MAX_RETRIES,
     _PREVISIBLE_TRANSIENT_FAILOVER_CODES,
     _account_capacity_wait_payload,
@@ -2609,7 +2610,9 @@ class _StreamingRetryMixin:
                         and _facade()._remaining_budget_seconds(deadline) > 0
                     ):
                         previsible_pinned_retries += 1
-                        delay = backoff_seconds(previsible_pinned_retries)
+                        delay = _PREVISIBLE_PINNED_BACKOFF_SECONDS[
+                            min(previsible_pinned_retries, len(_PREVISIBLE_PINNED_BACKOFF_SECONDS)) - 1
+                        ]
                         _facade().logger.info(
                             "Retrying pre-visible transient stream failure on pinned account "
                             "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s",
