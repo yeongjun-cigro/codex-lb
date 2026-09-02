@@ -615,6 +615,13 @@ def _request_log_client_fields(
     return useragent, useragent_group, None
 
 
+# Local patch: overload codes that are safe to retry while nothing has reached
+# the client yet (upstream produced no output, so a replay cannot duplicate work).
+_PREVISIBLE_TRANSIENT_FAILOVER_CODES = frozenset({"server_is_overloaded", "overloaded_error"})
+# Bounded same-account retries when the request is pinned to the failed account.
+_PREVISIBLE_PINNED_MAX_RETRIES = 2
+
+
 class _RetryableStreamError(Exception):
     def __init__(self, code: str, error: UpstreamError, *, exclude_account: bool = False) -> None:
         super().__init__(code)

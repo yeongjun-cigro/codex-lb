@@ -293,6 +293,7 @@ from app.modules.proxy._service.streaming.protocol import _StreamingServiceProto
 from app.modules.proxy._service.streaming.retry import _StreamingRetryMixin
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
+    _PREVISIBLE_TRANSIENT_FAILOVER_CODES,
     _REQUEST_TRANSPORT_WEBSOCKET,  # noqa: F401
     _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS,  # noqa: F401
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
@@ -426,9 +427,6 @@ from app.modules.proxy.tool_call_dedupe import (
 )
 from app.modules.proxy.work_admission import AdmissionLease
 
-# Overload codes that are safe to fail over while nothing has reached the
-# client yet: upstream produced no output, so a replay cannot duplicate work.
-_PREVISIBLE_TRANSIENT_FAILOVER_CODES = frozenset({"server_is_overloaded", "overloaded_error"})
 # Lifecycle frames held back until the first non-lifecycle frame so a
 # created->failed(overload) sequence can still fail over transparently.
 _HELD_LIFECYCLE_EVENT_TYPES = frozenset({"response.created", "response.in_progress"})

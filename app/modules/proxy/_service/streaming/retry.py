@@ -45,6 +45,8 @@ from app.modules.proxy._service.support import (
     _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _ACCOUNT_SELECTION_RECOVERY_HEARTBEAT_SECONDS,
     _LOCAL_ACCOUNT_CAP_ERROR_CODES,
+    _PREVISIBLE_PINNED_MAX_RETRIES,
+    _PREVISIBLE_TRANSIENT_FAILOVER_CODES,
     _account_capacity_wait_payload,
     _account_selection_recovery_sleep_seconds,
     _request_log_client_fields,
@@ -434,6 +436,7 @@ class _StreamingRetryMixin:
         file_preferred_account_id: str | None = rewritten_file_account_id
         require_preferred_account = False
         last_retryable_stream_error: _RetryableStreamError | None = None
+        previsible_pinned_retries = 0
         pending_post_refresh_transient_penalties: list[tuple[Account, UpstreamError, str, int | None, int]] = []
         deferred_account_error_backoffs: dict[str, Account] = {}
         post_refresh_transient_replacement_selected = False
@@ -2588,6 +2591,39 @@ class _StreamingRetryMixin:
                         excluded_account_ids.add(account.id)
                         require_security_work_authorized = True
                         last_security_work_retry_error = exc
+                        continue
+                    # Local patch: a pre-visible overload on an account the request is
+                    # pinned to (turn-state / continuation / file owner) cannot fail
+                    # over, so retry the same account after a short backoff instead
+                    # of excluding it and surfacing the error.
+                    if (
+                        exc.code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES
+                        and (
+                            require_preferred_account
+                            or file_required_preferred_account
+                            or payload_replay_required_account_id is not None
+                        )
+                        and account.id
+                        in {preferred_account_id, payload_replay_required_account_id, file_preferred_account_id}
+                        and previsible_pinned_retries < _PREVISIBLE_PINNED_MAX_RETRIES
+                        and _facade()._remaining_budget_seconds(deadline) > 0
+                    ):
+                        previsible_pinned_retries += 1
+                        delay = backoff_seconds(previsible_pinned_retries)
+                        _facade().logger.info(
+                            "Retrying pre-visible transient stream failure on pinned account "
+                            "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s",
+                            request_id,
+                            account.id,
+                            previsible_pinned_retries,
+                            _PREVISIBLE_PINNED_MAX_RETRIES,
+                            delay,
+                            exc.code,
+                        )
+                        last_retryable_stream_error = exc
+                        await _release_tracked_stream_lease(current_account_lease)
+                        current_account_lease = None
+                        await asyncio.sleep(delay)
                         continue
                     await _handle_or_defer_keyed_stream_health(account, exc.error, exc.code)
                     last_retryable_stream_error = exc
