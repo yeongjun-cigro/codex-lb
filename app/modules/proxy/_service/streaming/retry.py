@@ -2449,10 +2449,7 @@ class _StreamingRetryMixin:
                                 if (
                                     action == "failover_next"
                                     and _previsible_transient_failover_enabled()
-                                    and (
-                                        code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES
-                                        or getattr(tex, "status_code", None) == 429
-                                    )
+                                    and code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES
                                     and (
                                         require_preferred_account
                                         or file_required_preferred_account
