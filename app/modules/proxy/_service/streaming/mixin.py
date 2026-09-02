@@ -426,6 +426,17 @@ from app.modules.proxy.tool_call_dedupe import (
 )
 from app.modules.proxy.work_admission import AdmissionLease
 
+# Overload codes that are safe to fail over while nothing has reached the
+# client yet: upstream produced no output, so a replay cannot duplicate work.
+_PREVISIBLE_TRANSIENT_FAILOVER_CODES = frozenset({"server_is_overloaded", "overloaded_error"})
+# Lifecycle frames held back until the first non-lifecycle frame so a
+# created->failed(overload) sequence can still fail over transparently.
+_HELD_LIFECYCLE_EVENT_TYPES = frozenset({"response.created", "response.in_progress"})
+
+
+def _previsible_transient_failover_enabled() -> bool:
+    return bool(getattr(_facade().get_settings(), "stream_previsible_transient_failover_enabled", False))
+
 
 def _facade() -> Any:
     return sys.modules["app.modules.proxy.service"]
@@ -648,6 +659,8 @@ class _StreamingMixin(_StreamingRetryMixin):
                 response_id = event.response.id
                 settlement.response_id = response_id
             terminal_stream_error: _TerminalStreamError | None = None
+            hold_lifecycle = allow_retry and _previsible_transient_failover_enabled()
+            held_lifecycle_frames: list[str] = []
             if event and event.type in ("response.failed", "error"):
                 if event.type == "response.failed":
                     response = event.response
@@ -725,6 +738,15 @@ class _StreamingMixin(_StreamingRetryMixin):
                         )
                     if allow_retry and _facade()._should_retry_stream_error(code):
                         raise _RetryableStreamError(code, upstream_error, exclude_account=True)
+                    if hold_lifecycle and code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES:
+                        _facade().logger.info(
+                            "Failing over pre-visible transient stream failure "
+                            "request_id=%s account_id=%s code=%s stage=first_event",
+                            request_id,
+                            account_id_value,
+                            code,
+                        )
+                        raise _RetryableStreamError(code, upstream_error, exclude_account=True)
                 terminal_stream_error = _TerminalStreamError(error_code or code, upstream_error)
                 if allow_retry:
                     _facade().logger.info(
@@ -773,10 +795,13 @@ class _StreamingMixin(_StreamingRetryMixin):
                         latency_first_token_ms = _ttft_event_latency_ms(
                             event_type, first_payload, ttft_reasoning_deltas, attempt_started_at
                         )
-                    settlement.downstream_visible = True
-                    if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
-                        settlement.downstream_text_visible = True
-                    yield first
+                    if hold_lifecycle and event_type in _HELD_LIFECYCLE_EVENT_TYPES:
+                        held_lifecycle_frames.append(first)
+                    else:
+                        settlement.downstream_visible = True
+                        if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
+                            settlement.downstream_text_visible = True
+                        yield first
             if terminal_stream_error is not None:
                 raise terminal_stream_error
             async for line in iterator:
@@ -785,6 +810,9 @@ class _StreamingMixin(_StreamingRetryMixin):
                     if verbatim_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                         saw_text_delta = settlement.downstream_text_visible = True
                     settlement.downstream_visible = True
+                    for held_frame in held_lifecycle_frames:
+                        yield held_frame
+                    held_lifecycle_frames.clear()
                     yield line
                     continue
                 event_payload = parse_sse_data_json(line)
@@ -883,6 +911,21 @@ class _StreamingMixin(_StreamingRetryMixin):
                             error_message = raw_error_message
                             settlement.error = upstream_error
                             settlement.record_success = False
+                            if (
+                                hold_lifecycle
+                                and not settlement.downstream_visible
+                                and error_code in _PREVISIBLE_TRANSIENT_FAILOVER_CODES
+                            ):
+                                held_lifecycle_frames.clear()
+                                settlement.account_health_error = _facade()._should_penalize_stream_error(error_code)
+                                _facade().logger.info(
+                                    "Failing over pre-visible transient stream failure "
+                                    "request_id=%s account_id=%s code=%s stage=after_lifecycle",
+                                    request_id,
+                                    account_id_value,
+                                    error_code,
+                                )
+                                raise _RetryableStreamError(error_code, upstream_error, exclude_account=True)
                             if error_code == "stream_incomplete":
                                 failure_metadata = _RequestLogFailureMetadata(
                                     failure_phase="upstream",
@@ -943,12 +986,22 @@ class _StreamingMixin(_StreamingRetryMixin):
                     continue
                 if event_payload is not None and not preserve_raw_sse_line:
                     line = format_sse_event(event_payload)
+                if hold_lifecycle and not settlement.downstream_visible and event_type in _HELD_LIFECYCLE_EVENT_TYPES:
+                    held_lifecycle_frames.append(line)
+                    continue
                 settlement.downstream_visible = True
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     settlement.downstream_text_visible = True
                 if event_type in {"response.completed", "response.failed", "response.incomplete", "error"}:
                     terminal_event_seen = True
+                for held_frame in held_lifecycle_frames:
+                    yield held_frame
+                held_lifecycle_frames.clear()
                 yield line
+            for held_frame in held_lifecycle_frames:
+                settlement.downstream_visible = True
+                yield held_frame
+            held_lifecycle_frames.clear()
             if not terminal_event_seen:
                 status, error_code, error_message, failure_metadata = _mark_upstream_stream_incomplete(settlement)
         except ProxyResponseError as exc:

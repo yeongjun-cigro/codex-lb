@@ -296,6 +296,11 @@ class Settings(BaseSettings):
     warmup_model: str = "gpt-5.4-mini"
     openai_prompt_cache_key_derivation_enabled: bool = True
     http_responses_session_bridge_enabled: bool = True
+    # Local patch: when a direct (non-bridge) upstream stream fails with an
+    # overload code before any frame reached the client, drop the held
+    # response.created/in_progress frames and fail over to another account
+    # instead of surfacing the failure. Off by default (upstream behavior).
+    stream_previsible_transient_failover_enabled: bool = False
     http_responses_session_bridge_request_budget_seconds: float = Field(default=7200.0, gt=0)
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
     http_responses_session_bridge_codex_idle_ttl_seconds: float = Field(default=900.0, gt=0)
