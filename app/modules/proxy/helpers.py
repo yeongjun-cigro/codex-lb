@@ -99,6 +99,13 @@ def classify_upstream_failure(
         failure_class = "rate_limit"
     elif error_code in _QUOTA_CODES:
         failure_class = "quota"
+    elif http_status == 429:
+        # Local patch: the ChatGPT backend rejects per-account throttling with
+        # a bare HTTP 429 ("Rate limit exceeded") that carries no OpenAI error
+        # code, which normalizes to ``upstream_error``. Treating it as transient
+        # leaves the account eligible, so selection keeps hammering it; classify
+        # it as a rate limit so the balancer applies its cooldown.
+        failure_class = "rate_limit"
     elif (
         error_code in _TRANSIENT_CODES
         or is_upstream_model_capacity_error(error.get("message"))

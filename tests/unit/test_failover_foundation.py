@@ -498,3 +498,18 @@ class TestSelectAccountHealthTier:
         result = select_account(states, routing_strategy="capacity_weighted", deterministic_probe=True)
         assert result.account is not None
         assert result.account.account_id == "healthy"
+
+
+def test_bare_http_429_classifies_as_rate_limit():
+    """Local patch: a code-less upstream HTTP 429 must cool the account down, not stay transient."""
+    result = classify_upstream_failure(
+        error_code="upstream_error",
+        error={"message": "Rate limit exceeded"},
+        http_status=429,
+        phase="first_event",
+    )
+    assert result["failure_class"] == "rate_limit"
+    assert (
+        failover_decision(failure_class="rate_limit", downstream_visible=False, candidates_remaining=2)
+        == "failover_next"
+    )
